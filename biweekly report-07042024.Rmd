@@ -1,0 +1,571 @@
+---
+title: "HRBMP Fall Juvenile Survey Bi-weekly Report"
+author: "Stony Brook University, School of Marine and Atmospheric Science & Normandeau Associates, InC."
+date: "RIVER RUN 8,  Date: 09/23/24-09/27/24"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r global_options, include=FALSE}
+#hide code sections in the output files; export figs
+knitr::opts_chunk$set(fig.width=18, fig.height=20, fig.path='Figs/rr8/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r, include=FALSE}
+#debug code for exporting PDF
+options(tinytex.verbose = TRUE)
+```
+
+# 0. Brief abstract
+
+The Fall Juvenile Survey (FJS) is designed to provide data on juvenile fish in the Hudson River Estuary (HRE) to support calculation of standing crop and temporal and geographic indices for selected key HRE fish species. The FJS spans the entire HRE. Starting with River Run 9, sampling was exclusively conducted during daytime (defined as 30 minutes after sunrise to 30 minutes before sunset).
+
+Two types of gear are used for surveying: beam trawl and Tucker trawl. During River Runs 9-11, only beam trawls will be used. In situ measurements of water temperature (°C), dissolved oxygen (mg/L), specific conductivity (microsiemens/cm at 25°C), salinity (ppt), and turbidity (NTU) were collected at 65 fixed stations at approximately three-mile intervals along the length of the HRE.
+
+During the first 3 River Runs, all young-of-year (YOY) fish within each region caught were placed in sample containers, preserved with 70% ethanol, and taken to the laboratory for identification and enumeration. After the first 3 River Runs, only up to 60 YOY fish of each key species within each region caught will be placed and preserved in sample containers and taken to the laboratory for identification and enumeration. All yearling and adult fish were identified, sorted by length class, counted and returned to the water alive, if possible. All key species brought back to the laboratory were sorted by species and length and weight were measured. All length measurements were taken to the nearest millimeter (mm) total length, and weights measured to the nearest centigram (g). All fish brought back to the laboratory were preserved in 70% ethanol for 4-9 days before measurements were taken from them.
+
+\*Note: all the data used for this bi-weekly report are preliminary and have not undergone full QC audits.
+
+# 1. Summary of weekly sampling protocol
+
+For river run 8 (September 23 2024 to September 27 2024): there were 210 planned tows; no sample sites were affected by low D.O. (\>4.5 mg/l) or high Temp (\>28°C). 1 beam trawls not done in region 9 due to security zones set up because of cable laying operations. 209 valid samples were collected.
+
+-   No sturgeon were caught.
+
+-   No Round Goby were caught.
+
+-   101 Blue Crabs were caught.
+
+-   Heavy ctenophores caught in beam trawls and tuckers in regions 1 and 2.
+
+-   Tuesday night - blew hydraulic hose on Woody I beam trawl winch. Had to cut cable and retrieve beam trawl by hand. Hydraulic hose replaced in time to go out the next night.
+
+-   No major problems were encountered.
+
+```{r, message=FALSE}
+library(haven)
+library(tidyverse)
+library(scales)
+library(plyr)
+
+### ------------------------------------------ ###
+# 0. load data ----
+### ------------------------------------------ ###
+
+# fs20c1.sas7bdat – count data sheet (by species by length class)
+lc.df <- read_sas("Data/river run 8/fs24c1_08.sas7bdat")
+
+# fs20lw1.sas7bdat – lab length and weight data sheet
+lw.lab.df <- read_sas("Data/river run 8/fs24lw1_08.sas7bdat")
+
+#  fs20m1.sas7bdat – sturgeon data sheet
+stur.df <- read_sas("Data/river run 8/fs24m1_08.sas7bdat")
+
+# fs20q1.sas7bdat – water quality data (this will be a little different , adding turbidity)
+wq.df <- read_sas("Data/river run 8/fs24q1_08.sas7bdat")
+
+# fs20r1.sas7bdat – Number of samples returned to lab
+nlab.df <- read_sas("Data/river run 8/fs24r1_08.sas7bdat")
+
+# fs20s1.sas7bdat – Field Header information
+header.df <- read_sas("Data/river run 8/fs24s1_08.sas7bdat")
+
+# fs20cl1.sas7bdat – ?
+#test <- read_sas("Data/river run 1/fs24cl1_01.sas7bdat")
+
+# other information needed
+region.df <- read.csv("Data/region.rm.csv") # river.region
+  species.df <- read.csv("Data/species.code.csv") # species list
+species.df$SPECIES <- stringi::stri_trans_totitle(species.df$SPECIES)   # capitalize first letter to match the data
+
+## 1.0 include riv_region ----
+station.df <- header.df %>%
+  select(REF, SAMPLE, GEAR, RIV_MILE, USE_CODE, COMMENTS, TIME, DATE) %>%
+  add_column("riv.region.code" = NA, "riv.region" = NA, "river.mile.range" = NA)%>%
+  filter(USE_CODE==1)
+
+for (i in 1:nrow(station.df)) {
+  station.df$riv.region.code[i] <- region.df$code[with(region.df, station.df$RIV_MILE[i] >= mile.min & station.df$RIV_MILE[i] <= mile.max)]
+  station.df$riv.region[i] <-region.df$full[with(region.df, station.df$RIV_MILE[i] >= mile.min & station.df$RIV_MILE[i] <= mile.max)]
+  station.df$river.mile.range[i] <- paste0(region.df$mile.min[with(region.df, station.df$RIV_MILE[i] >= mile.min & station.df$RIV_MILE[i] <= mile.max)], "-",
+                                           region.df$mile.max[with(region.df, station.df$RIV_MILE[i] >= mile.min & station.df$RIV_MILE[i] <= mile.max)])
+ 
+  # next line is added because there are data with use.code=1 and comment=1, which mess up the following code. Not sure if missing anything.
+  if (station.df$USE_CODE[i] == 1)  {station.df$COMMENTS[i] <- "NA"}
+}; remove(i)
+
+## 1.1 sites status by region by gear ----
+station.df <- station.df %>%
+  dplyr::group_by(riv.region.code, riv.region, river.mile.range, GEAR, USE_CODE, COMMENTS) %>%
+  dplyr::summarise(No.station = n()) %>%
+  add_column("sample.status" = NA)
+
+# use code: 1-no problem, 2-sturgeon caught, 4-temp/DO anomaly, 5-void
+# comment (when use.code=4): 2-water temp.>28, 3-DO<4.5 mg/liter, 4-both occur
+for (i in 1:nrow(station.df)) {
+  if (station.df$USE_CODE[i] == 1)  {station.df$sample.status[i] <- "sampled"}
+  if (station.df$USE_CODE[i] == 2)  {station.df$sample.status[i] <- "sturgeon caught"}
+  if (station.df$USE_CODE[i] == 4 & station.df$COMMENTS[i] == 2)  {station.df$sample.status[i] <- "high.temp."}
+  if (station.df$USE_CODE[i] == 4 & station.df$COMMENTS[i] == 3)  {station.df$sample.status[i] <- "low.DO"}
+  if (station.df$USE_CODE[i] == 4 & station.df$COMMENTS[i] == 4)  {station.df$sample.status[i] <- "high.temp.&low.DO"}
+  if (station.df$USE_CODE[i] == 5)  {station.df$sample.status[i] <- "void"}
+ 
+  # change gear name
+  if (station.df$GEAR[i] == 18)  {station.df$GEAR[i] <- "BT"}
+  if (station.df$GEAR[i] == 65)  {station.df$GEAR[i] <- "TT"}
+}; remove(i)
+
+list.conditions <- unique(station.df$sample.status)
+
+station.df <- station.df %>%
+  as.data.frame() %>%
+  select(riv.region.code, riv.region, river.mile.range, GEAR, sample.status, No.station) %>%
+  spread(sample.status, No.station) %>%
+  replace(is.na(.), 0)
+
+library(data.table)
+station.df <- as.data.frame(dcast.data.table(data = setDT(station.df),
+                                                    formula = factor(riv.region.code) + riv.region + river.mile.range ~ GEAR,
+                                                    value.var = list.conditions)); remove(list.conditions)
+
+station.df <- station.df %>%
+  replace(is.na(.), 0) %>%
+  mutate(riv.region.code = as.character(riv.region.code)) %>% # change rr code to chr. so not that column shows Total when summing up
+  bind_rows(summarise_all(., ~if(is.numeric(.)) {sum(.)} else {"Total"})) 
+ # %>% add_column("Total" = rowSums(.[,c(-1:-3)]))
+#station.df <- station.df[,-1]
+```
+
+**Table 1.1 Summary of sampling status; BT= Beam Trawl**
+
+```{r}
+knitr::kable(station.df)
+```
+
+# 2. Catch information from the field
+
+```{r}
+## 2.0 include riv_mile and riv_region ----
+CI.df <- lc.df %>%
+  dplyr::mutate_at(vars(CT_LC1, CT_LC2, CT_LC3, CT_LC4), ~ replace_na(., 0)) %>% # replace frequency NA with 0
+  add_column("riv_mile" = NA, "riv_region" = NA) 
+
+for (i in 1:nrow(CI.df)) {
+  CI.df$riv_mile[i] <- header.df$RIV_MILE[which(header.df$SAMPLE == CI.df$SAMPLE[i])]
+  CI.df$riv_region[i] <- region.df$code[with(region.df, CI.df$riv_mile[i] >= mile.min & CI.df$riv_mile[i] <= mile.max)]
+}
+remove(i)
+```
+
+## 2.1 Counts by species by region
+
+```{r}
+## 2.1 counts by species by region  ----
+CI.df <- CI.df %>%
+  mutate(total.CT = CT_LC1 + CT_LC2 + CT_LC3 + CT_LC4) %>%     # catch count of all size
+  plyr::ddply(.(riv_region, SPECIES), summarize, catch.count = sum(total.CT)) %>%   # catch count by species by region
+  plyr::ddply(.(SPECIES), mutate, species.CT = sum(catch.count))# total catch count by species 
+
+CI.key.df <- CI.df %>%   
+  filter(SPECIES %in% species.df$SPECIES[which(species.df$key.species == "y")])   # keep key species only 
+
+# if there are key species with zero catch, we add zero data entries (zero-catch region is unlikely so we do not consider that)
+if (length(unique(CI.key.df$SPECIES)) != 13) {
+  CI.key.df <- rbind(CI.key.df,
+                    expand.grid(riv_region = 0:12, catch.count = 0, species.CT = 0,
+                                SPECIES = setdiff(species.df$SPECIES[which(species.df$key.species == "y")], unique(CI.df$SPECIES))
+                                )
+                    )
+}
+
+# make bar plots 
+ggplot(CI.key.df) + 
+  geom_bar(aes(x = riv_region, y = catch.count), stat = "identity", fill = "grey60") +
+  geom_hline(yintercept = 0) +
+  geom_text(aes(label = paste0("N=",species.CT), x = 12, y = Inf), hjust = 2, color = "firebrick1", size=8) +
+  scale_x_continuous(breaks = c(0:12)) +
+  scale_y_continuous(breaks= pretty_breaks()) +
+  labs(y = "Field catch count", x = "River region") +
+  facet_wrap(.~SPECIES, scale = "free_x") +
+  theme_classic() +
+  theme(text = element_text(size=30))+
+  coord_flip()
+```
+
+<center>**Figure 2.1 Field Catch Count by Species by Region for 13 key species. The total catch count for each species is denoted with the N in each panel. Key species with zero catch is also shown here. For river run 1-3 all length class 1 fish are brought back to lab and not included in the field catch information.**</center>
+
+## 2.2 Spatial distribution of total catch
+
+```{r}
+knitr::opts_chunk$set(fig.width=18, fig.height=15, fig.path='Figs/rr8/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+## 2.2 total catch counts by region----
+CI.region.df <- CI.df %>%
+  plyr::ddply(.(riv_region), summarize, region.CT = sum(catch.count))    # total catch count by region 
+
+ggplot(CI.region.df) + 
+  geom_bar(aes(x = riv_region, y = region.CT), stat = "identity", fill = "grey60") +
+  geom_hline(yintercept = 0) +
+  geom_text(aes(label = region.CT, x = riv_region, y = region.CT), hjust = -0.1, color = "firebrick1",size=8) +
+  geom_text(aes(label = paste0("Total=", sum(region.CT)), x = 12, y = Inf), hjust = 2, color = "firebrick1",size=8) +
+  scale_x_continuous(breaks = c(0:12)) +
+  scale_y_continuous(breaks= pretty_breaks()) +
+  labs(y = "Species-aggregated field catch count", x = "River region") +
+  theme_classic() +
+  theme(text = element_text(size=30))+
+  coord_flip()
+```
+
+<center>**Figure 2.2 Field Catch Count by Region. The total catch count for each region is denoted with red numbers. For river run 1-3 all length class 1 fish are brought back to lab and not included in the field catch information.**</center>
+
+# 3. Biological information of key species
+
+## 3.1 Filter key species
+
+13 key species (Alewife, American Shad, Atlantic Tomcod, Bay Anchovy, Blueback Herring, Channel Catfish, Hogchoker, Spottail Shiner, Striped Bass, Tessellated Darter, Weakfish, White Catfish, and White Perch)
+
+```{r}
+## 4.0 simulate weight measurements with the column "W" (check the colname when using real data!!!) ----
+BI.df <- lw.lab.df %>%
+  merge(species.df[,c(1,2)]) %>%  # add a species column
+  filter(SPECIES %in% species.df$SPECIES[which(species.df$key.species == "y")], is.na(COMMENT))
+
+# if there are key species that are not measured
+# if (length(unique(BI.df$SPECIES)) != 13) {
+#   n.diff.species <- 13 - length(unique(BI.df$SPECIES))
+#   BI.df <- rbind(BI.df[1:n.diff.species,], BI.df)
+# 
+#   BI.df$SPECIES[1:n.diff.species] <- setdiff(species.df$SPECIES[which(species.df$key.species == "y")], unique(BI.df$SPECIES))
+#   BI.df[1:n.diff.species, 1:14] <- NA
+# 
+#   remove(n.diff.species)
+# }
+```
+
+## 3.2 Size composition (length and weight) and outliers
+
+```{r}
+## 4.1 flag outliers in length and weight  ----
+library(rstatix)
+
+# outliers defined as "> Q3 + 1.5*IQR" or "< Q1 - 1.5*IQR"
+BI.df <- BI.df %>%
+  plyr::ddply(.(SPECIES), mutate, length.outlier = is_outlier(LENGTH, coef = 1.5)) %>% # outliers in length
+  plyr::ddply(.(SPECIES), mutate, weight.outlier = is_outlier(WEIGHT, coef = 1.5)) %>%      # outliers in weight
+  plyr::ddply(.(SPECIES), mutate, mean.length = mean(LENGTH)) %>% # mean length
+  plyr::ddply(.(SPECIES), mutate, mean.weight = mean(WEIGHT))  # mean weight
+
+length.outlier.df <- filter(BI.df, length.outlier == "TRUE")
+weight.outlier.df <- filter(BI.df, weight.outlier == "TRUE")
+
+```
+
+```{r}
+# weight boxplot
+ggplot(BI.df) +
+  geom_boxplot(aes(x = SPECIES, y = WEIGHT), width = 0.8) +
+  geom_point(data = subset(BI.df, weight.outlier == TRUE), aes(x = SPECIES, y = WEIGHT), color = "firebrick1",size=3) +
+  geom_point(aes(x = SPECIES, y = mean.weight), color = "dodgerblue3", shape = 7, size = 5) +
+  labs(x = "Species", y = "Weight [g]") +
+  theme_bw()+
+  theme(panel.grid = element_blank())+
+  theme(axis.text.x=element_text(angle=45,hjust=1,vjust=1))+
+  theme(text = element_text(size=30))
+```
+
+<center>**Figure 3.2.1 Weight box-plot, red dots represent for outliers, blue boxes represent for mean values.**</center>
+
+Outliers are defined as larger than "Q3 + 1.5\*IQR" or smaller than "Q1 - 1.5\*IQR".
+
+<center>**Table 3.2.1 Outliers in weight data**</center>
+
+```{r}
+# print results for weight outliers; only keep the necessary columns
+weight.outlier.table <- weight.outlier.df %>%
+  select(SAMPLE, RIV_RUN, COLL_DT, WEIGHT, SPECIES, mean.weight)
+knitr::kable(weight.outlier.table)
+```
+
+```{r}
+# length boxplot
+ggplot(BI.df) +
+  geom_boxplot(aes(x = SPECIES, y = LENGTH), width = 0.8) +
+  geom_point(data = subset(BI.df, length.outlier == TRUE), aes(x = SPECIES, y = LENGTH), color = "firebrick1",size=3) +
+  geom_point(aes(x = SPECIES, y = mean.length), color = "dodgerblue3", shape = 7, size = 5) +
+  labs(x = "Species", y = "Length [mm]") +
+  theme_bw()+
+  theme(panel.grid = element_blank())+
+  theme(axis.text.x=element_text(angle=45,hjust=1,vjust=1))+
+  theme(text = element_text(size=30))
+```
+
+<center>**Figure 3.2.2 Length box-plot, red dots represent for outliers, blue boxes represent for mean values.**</center>
+
+Outliers are defined as larger than "Q3 + 1.5\*IQR" or smaller than "Q1 - 1.5\*IQR".
+
+<center>**Table 3.2.2 Outliers in length data**</center>
+
+```{r}
+# print results for length outliers, only keep the necessary columns
+length.outlier.table <- length.outlier.df %>%
+  select(SAMPLE, LENGTH, RIV_RUN, COLL_DT, SPECIES, mean.length)
+knitr::kable(length.outlier.table)
+```
+
+## 3.3 2-D outliers for length and weight
+
+```{r}
+library(rstatix)
+
+BI.2D.df <- BI.df
+BI.2D.df$two.D.outlier <- FALSE
+BI.df <- data.frame()
+
+for (i in unique(BI.2D.df$SPECIES)) {
+  temp.df <- subset(BI.2D.df, SPECIES == i)
+  if (sum(is.na(temp.df$LENGTH)) == 0) {
+    # Mahalanobis Distance
+    if (nrow(temp.df) <= 2) {
+      temp.df$two.D.outlier <- "FALSE"
+    } else {
+      temp.index <- which(mahalanobis_distance(temp.df[, c("LENGTH", "WEIGHT")])$is.outlier == "TRUE")[]
+      temp.df$two.D.outlier[temp.index] <- "TRUE"
+    }
+  }
+ 
+  BI.df <- rbind(BI.df, temp.df)
+}; remove(temp.df, temp.index, i)
+
+# length-weight scatter plot
+ggplot(BI.df) +
+  geom_point(aes(x = LENGTH, y = WEIGHT, color = two.D.outlier), size=3) +
+  facet_wrap(.~SPECIES) +
+  scale_colour_manual(values = c("black", "red")) +
+  labs(x = "length [mm]", y = "Weight [g]") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+two.D.outlier.df <- filter(BI.df, two.D.outlier == "TRUE")
+```
+
+**Figure 3.3.1 Two-dimensional length-weight distribution, red dots representing the outliers. The Mahalanobis distance is used to identify the outliers in the two-dimensional length-weight data distribution. It uses a multi-dimensional generalization to measures the standard deviations of each data point P from the mean of the overall distribution D. This distance is zero for P at the mean of D and grows as P moves away from the mean along each principal component axis. The Mahalanobis distance is unitless, scale-invariant, and accounts for the correlations of the data set.**
+
+**Table 3.3.1 Outliers in 2-D length weight data**
+
+```{r}
+two.D.outlier.df <- two.D.outlier.df %>%
+  select(SAMPLE, LENGTH, WEIGHT,RIV_RUN, COLL_DT, SPECIES)
+knitr::kable(two.D.outlier.df)
+```
+
+# 4. Large Hudson River ecosystem fish community indices
+
+Including species richness; species diversity; species evenness and fish species composition.
+
+Species richness S is used to represent the richness, the higher the richer.
+
+Diversity is represented by Shannon-Wiener diversity index H and Simpson diversity 1-D:
+
+Shannon-Wiener diversity index H, H = -sum(Pi \* ln(Pi)), where Pi is the weight proportion of ith species to total weight; the higher the H value, the higher the diversity.
+
+Simpson diversity 1-D (denoted as "SD" in table below), D = sum(n\*(n-1))/N\*(N-1) , where n is the number of species i, N is the total number of all species; the higher the 1-D value, the higher the diversity.
+
+Species evenness is represented using Pielou index J, J = H/ln(S), where H is the SW index and S is the number of species. The Pielou index value is defined between 0 and 1. 1 represents a community with perfect evenness, and it decreases to zero as the relative abundances of the species diverge from evenness.
+
+```{r}
+### ------------------------------------------ ###
+# 5. Larger Hudson River fish community indices ----
+### ------------------------------------------ ###
+
+FC.df <- CI.df %>%
+  plyr::ddply(.(SPECIES), summarize, catch.count = sum(catch.count))
+
+## 5.1 species richness S ----
+S<-length(unique(FC.df$SPECIES)) # the higher the richer
+
+## 5.2 species diversity ----
+
+# Shannon-Wiener diversity index H, H = -sum(Pi * ln(Pi)), where Pi is the weight proportion of ith species to total weight
+FC.df$Pi <- FC.df$catch.count/sum(FC.df$catch.count)
+H<-(-sum(FC.df$Pi*log(FC.df$Pi)))# the higher the more diverse
+
+# Simpson diversity 1-D, D = sum(n*(n-1))/N*(N-1) , where n is the number of species i, N is the total number of all species
+SD<-(1- sum(FC.df$catch.count*(FC.df$catch.count - 1))/(sum(FC.df$catch.count)*(sum(FC.df$catch.count)-1))) # range 0-1, the higher the more diverse
+
+## 5.3 species evenness ----
+
+# Pielou index J, J = H/ln(S), where H is the SW index and S is the number of species
+J<-(-sum(FC.df$Pi*log(FC.df$Pi)))/log(length(unique(FC.df$SPECIES))) # range 0-1, the higher the more even
+```
+
+<center>**Table 4 Larger Hudson River fish community indices**</center>
+
+```{r}
+INDICES<-c("Species richness","Shannon-Wiener diversity index","Simpson diversity","Pielou index")
+VALUES <- rbind (S, H, SD, J)
+Indices.table <- cbind.data.frame (INDICES, VALUES)
+knitr::kable(Indices.table)
+```
+
+# 5. Pairwise plots
+
+Pairwise plots for variables collected in the survey to showcase possible relationships that may aid in identification of outliers, the interpretation and application of data and samples.
+
+-   A big matrix to have plots for each pair of variables in the lower triangle and correlation coefficients in the upper triangle.  The diagonal plots will be variable's frequency distribution
+
+-   Sample. No, depth, DOY, gear, Rkm, Time (More variables may applied)
+
+```{r}
+knitr::opts_chunk$set(fig.width=12, fig.height=7, fig.path='Figs/rr8/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+# combine field catch data with survey header information
+pp.df <- lc.df %>%
+  merge(., header.df[,c("SAMPLE", "GEAR", "RIV_MILE", "DPTH_RIV", "TIME", "DATE")]) %>%
+  mutate(DOY = lubridate::yday(DATE)) %>%
+  mutate(TIME = as.numeric(substr(TIME, 1, 2))) %>%
+  select(REF, TAXON, GEAR, RIV_MILE, DPTH_RIV, TIME, DOY) %>%
+  dplyr::rename(river.mile = RIV_MILE, depth = DPTH_RIV, hour = TIME)
+
+library(PerformanceAnalytics)
+chart.Correlation(subset(pp.df, select = -c(REF, TAXON)), histogram = TRUE, method = "spearman")
+```
+
+<center>**Figure 5 Pairwise plots for variables collected in the survey, the values represent for correlation index, the numbers of red dots indicating the significant level.**</center>
+
+# 6. Special events
+
+## 6.1 Shortnose Sturgeon (Acipenser brevirostrum) and Atlantic Sturgeon (Acipenser oxyrinchus)
+
+```{r}
+knitr::opts_chunk$set(fig.width=18, fig.height=20, fig.path='Figs/rr8/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+<center>**Table 6.1 Length, weight and location of Sturgeon caught**</center>
+
+```{r}
+## 7.1 sturgeons (Shortnose Sturgeon (Acipenser brevirostrum) and Atlantic Sturgeon (Acipenser oxyrinchus) ) ----
+
+# add river region based on river mile,  gear names, and taxon names
+stur.lab.df <- stur.df %>%
+  add_column("riv_region" = NA)
+
+for (i in 1:nrow(stur.lab.df)) {
+  stur.lab.df$riv_region[i] <- region.df$code[with(region.df, stur.lab.df$RM[i] >= mile.min & stur.lab.df$RM[i] <= mile.max)]
+
+  if (stur.lab.df$GEAR[i] == 18) {stur.lab.df$GEAR[i] = "Beam Trawl"} else
+  {stur.lab.df$GEAR[i] = "Tucker Trawl" }
+
+  if (stur.lab.df$TAXON[i] == 27) {stur.lab.df$TAXON[i] = "Shortnose Sturgeon"} 
+  if (stur.lab.df$TAXON[i] == 29) {stur.lab.df$TAXON[i] = "Atlantic Sturgeon"}
+  if (stur.lab.df$TAXON[i] == 70) {stur.lab.df$TAXON[i] = "Unidentified Sturgeon"}
+  else
+  {stur.lab.df$TAXON[i] = stur.lab.df$TAXON[i]}
+} ;remove(i)
+
+stur.lab.df<- stur.lab.df %>%
+  add_column("LAT"= stur.lab.df$LAT_MN/60 + stur.lab.df$LAT_DG)%>%
+  add_column("LON"=stur.lab.df$LON_MN/60 + stur.lab.df$LON_DG)
+
+stur.table <- stur.lab.df %>% # the GPS coordinates of sturgeon catch
+  select(SAMPLE, GEAR, riv_region, RM, TIME, DATE, TAXON, LENGTH, WEIGHT, LAT, LON)
+knitr::kable(stur.table)
+
+### 7.1.1 count, length and weight ----
+
+stur.gear.df <- stur.lab.df %>%
+  plyr::ddply(.(GEAR), mutate, mean.length = mean(LENGTH)) %>% # mean length
+  plyr::ddply(.(GEAR), mutate, mean.weight = mean(WEIGHT)) %>% # mean weight
+  plyr::ddply(.(riv_region, GEAR), mutate, catch.count = length(REF))
+
+stur.gear.length.p <- ggplot(stur.gear.df) +
+  geom_boxplot(aes(x = GEAR, y = LENGTH), width = 0.6) +
+  geom_point(aes(x = GEAR, y = LENGTH),size=3) +
+  geom_point(aes(x = GEAR, y = mean.length), color = "dodgerblue3", shape = 7, size = 8) +
+  labs(x = "", y = "Length [mm]") +
+  theme_classic()+
+  theme(text = element_text(size=30))
+
+stur.gear.W.p <- ggplot(stur.gear.df) +
+  geom_boxplot(aes(x = GEAR, y = WEIGHT), width = 0.6) +
+  geom_point(aes(x = GEAR, y = WEIGHT),size=3) +
+  geom_point(aes(x = GEAR, y = mean.weight), color = "dodgerblue3", shape = 7, size = 8) +
+  labs(x = "", y = "Weight [g]") +
+  theme_classic()+
+  theme(text = element_text(size=30))
+
+stur.gear.region.df <- stur.gear.df %>%
+  plyr::ddply(.(riv_region, GEAR), summarize, catch.count = length(REF)) %>%
+  ddply(.(riv_region, GEAR), transform, pos = cumsum(catch.count) - (0.5*catch.count))
+
+stur.gear.region.p <- ggplot(stur.gear.region.df) +
+  geom_bar(aes(x = riv_region, y = catch.count, fill = GEAR), stat = "identity") +
+  geom_hline(yintercept = 0) +
+  geom_text(aes(label = catch.count, x = riv_region, y = catch.count, group = GEAR), position = position_stack(vjust = 0.5), color = "black",size=8) +
+  geom_text(aes(label = paste0("Total=", sum(catch.count)), x = 0, y = Inf), hjust = 1, color = "black",size=8) +
+  scale_x_continuous(breaks = c(0:12)) +
+  scale_y_continuous(breaks= pretty_breaks()) +
+  labs(y = "sturgeons catch count", x = "River region") +
+  theme_classic() +
+  theme(text = element_text(size=30))+
+  coord_flip()
+
+library(gridExtra)
+grid.arrange(stur.gear.length.p, stur.gear.W.p, stur.gear.region.p, nrow = 2)
+```
+
+<center>**Figure 6.1 The upper two plots show the length and weight distribution of sturgeons caught by different gear, with blue boxes indicating the mean values; the lower plot represent the numbers and locations of sturgeons caught by different gear.**</center>
+
+## 6.2 Round goby
+
+```{r}
+knitr::opts_chunk$set(fig.width=15, fig.height=15, fig.path='Figs/rr8/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+<center>**Table 6.2 Length, weight and location of Round goby caught**</center>
+
+```{r}
+## 7.2 round goby ----
+
+# all round goby all returned to the lab for measurements, so use the lw.lab.df is enough
+library(readxl)
+
+rg.df <- read_excel("Data/river run 5/2024 Hudson River FJS Sturgeon and Round Goby Tables.xlsx", sheet = 2)
+
+rg.df<-rg.df[c(2:5),]
+colnames(rg.df)<-rg.df[c(1),]
+rg.df<-rg.df[c(2:4),]
+
+rg.table <- rg.df
+knitr::kable(rg.table)
+
+# ### 7.2.1 count, length, weight by region and gear ----
+# rg.gear.df <- rg.df %>%
+#   plyr::ddply(.(riv_region, GEAR), mutate, catch.count = length(Species))
+# 
+# rg.gear.region.df <- rg.gear.df %>%
+#   plyr::ddply(.(riv_region, GEAR), summarize, catch.count = length(Species)) %>%
+#   ddply(.(riv_region, GEAR), transform, pos = cumsum(catch.count) - (0.5*catch.count))
+# 
+# ggplot(rg.gear.region.df) +
+#   geom_bar(aes(x = riv_region, y = catch.count, fill = GEAR), stat = "identity") +
+#   geom_hline(yintercept = 0) +
+#   geom_text(aes(label = catch.count, x = riv_region, y = catch.count, group = GEAR), position = position_stack(vjust = 0.5), color = "black",size=8) +
+#   geom_text(aes(label = paste0("Total=", sum(catch.count)), x = 0, y = Inf), hjust = 1, color = "black",size=8) +
+#   scale_x_discrete(breaks = unique(rg.gear.region.df$riv_region)) +
+#   scale_y_continuous(breaks= pretty_breaks()) +
+#   labs(y = "round goby catch count", x = "River region") +
+#   theme_classic() +
+#   theme(text = element_text(size=30))+
+#   coord_flip()
+```
